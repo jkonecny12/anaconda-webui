@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Red Hat, Inc.
+ * Copyright (C) 2024 Red Hat, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -29,6 +29,7 @@ import { AddressContext, LanguageContext, SystemTypeContext, OsReleaseContext } 
 import { AnacondaHeader } from "./AnacondaHeader.jsx";
 import { AnacondaWizard } from "./AnacondaWizard.jsx";
 import { CriticalError, errorHandlerWithContext, bugzillaPrefiledReportURL } from "./Error.jsx";
+import { EmptyStatePanel } from "cockpit-components-empty-state";
 
 import { BossClient } from "../apis/boss.js";
 import { LocalizationClient, initDataLocalization, startEventMonitorLocalization } from "../apis/localization.js";
@@ -52,6 +53,7 @@ export const Application = () => {
     const [conf, setConf] = useState();
     const [language, setLanguage] = useState();
     const [osRelease, setOsRelease] = useState("");
+    const [backendReady, setBackendReady] = useState(false);
     const [state, dispatch] = useReducerWithThunk(reducer, initialState);
     const [storeInitilized, setStoreInitialized] = useState(false);
     const criticalError = state?.error?.criticalError;
@@ -70,34 +72,39 @@ export const Application = () => {
             setJsEroor(errObj);
         };
 
-        cockpit.file("/run/anaconda/bus.address").watch(address => {
-            setCriticalErrorAction();
-            const clients = [
-                new LocalizationClient(address),
-                new StorageClient(address),
-                new PayloadsClient(address),
-                new RuntimeClient(address),
-                new BossClient(address),
-                new NetworkClient(address),
-                new UsersClient(address),
-            ];
-            clients.forEach(c => c.init());
 
-            setAddress(address);
+        cockpit.file("/run/anaconda/backend_ready").watch(backendReady => {
+            setBackendReady(true);
 
-            Promise.all([
-                initDataStorage({ dispatch }),
-                initDataLocalization({ dispatch }),
-                initDataNetwork({ dispatch }),
-                initDataRuntime({ dispatch }),
-            ])
-                    .then(() => {
-                        setStoreInitialized(true);
-                        startEventMonitorStorage({ dispatch });
-                        startEventMonitorLocalization({ dispatch });
-                        startEventMonitorNetwork({ dispatch });
-                        startEventMonitorRuntime({ dispatch });
-                    }, onCritFail({ context: N_("Reading information about the computer failed.") }));
+            cockpit.file("/run/anaconda/bus.address").watch(address => {
+                setCriticalErrorAction();
+                const clients = [
+                    new LocalizationClient(address),
+                    new StorageClient(address),
+                    new PayloadsClient(address),
+                    new RuntimeClient(address),
+                    new BossClient(address),
+                    new NetworkClient(address),
+                    new UsersClient(address),
+                ];
+                clients.forEach(c => c.init());
+
+                setAddress(address);
+
+                Promise.all([
+                    initDataStorage({ dispatch }),
+                    initDataLocalization({ dispatch }),
+                    initDataNetwork({ dispatch }),
+                    initDataRuntime({ dispatch }),
+                ])
+                        .then(() => {
+                            setStoreInitialized(true);
+                            startEventMonitorStorage({ dispatch });
+                            startEventMonitorLocalization({ dispatch });
+                            startEventMonitorNetwork({ dispatch });
+                            startEventMonitorRuntime({ dispatch });
+                        }, onCritFail({ context: N_("Reading information about the computer failed.") }));
+            });
         });
 
         readConf().then(
@@ -109,9 +116,13 @@ export const Application = () => {
     }, [dispatch, onCritFail]);
 
     // Postpone rendering anything until we read the dbus address and the default configuration
-    if (!criticalError && (!address || !conf || !osRelease || !storeInitilized)) {
+    if (!criticalError && (!address || !conf || !osRelease || !storeInitilized || !backendReady)) {
         debug("Loading initial data...");
-        return null;
+        return (
+            <Page>
+              <EmptyStatePanel loading title={_("Loading...")}/>
+            </Page>
+        )
     }
 
     // On live media rebooting the system will actually shut it off
